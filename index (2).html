@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Porch & Parlor Inventory</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://unpkg.com/tailwindcss@2/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; }
+        .font-serif { font-family: Georgia, serif; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { Search, Info, MapPin, Wine, ChevronRight, ChevronDown, GlassWater, Flame, Beer, Star, ShieldCheck, Moon, Repeat, RefreshCw, AlertCircle } = lucide;
+
+        const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSXAU1f5QYEG2F3VWipA7X_svPhBdS2s7u6nu8kkPjkj9RJMBxQzdzhQPcQsl18CgZs-8-Tgx3DUCGP/pub?output=csv";
+
+        function App() {
+            const [inventoryData, setInventoryData] = useState({
+                "Wines (Glass)": [],
+                "Wines (Bottle)": [],
+                "Spirits": [],
+                "Beer": [],
+                "After Dinner": [],
+                "Captain's List": [],
+                "Allocated": []
+            });
+            const [isLoading, setIsLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [debugInfo, setDebugInfo] = useState(null);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [activeProgram, setActiveProgram] = useState('Wines (Glass)');
+            const [activeSubCategory, setActiveSubCategory] = useState('All');
+            const [expandedItems, setExpandedItems] = useState({});
+
+            const getProgramBucket = (row) => {
+                const cat = (row['Category'] || "").toLowerCase();
+                const sub = (row['Sub Category'] || "").toLowerCase();
+
+                if (cat.includes('allocated') || sub.includes('allocated')) return 'Allocated';
+                if (cat.includes('captain') || sub.includes('captain')) return "Captain's List";
+                if (cat.includes('wine by the glass') || cat.includes('btg')) return 'Wines (Glass)';
+                if (cat.includes('wine by the bottle')) return 'Wines (Bottle)';
+                if (cat.includes('beer')) return 'Beer';
+                if (cat.includes('port') || cat.includes('dessert') || cat.includes('after dinner') || cat.includes('digestif') || cat.includes('cordial') || cat.includes('cognac')) return 'After Dinner';
+                return 'Spirits';
+            };
+
+            const fetchData = async () => {
+                try {
+                    setIsLoading(true);
+                    setError(null);
+                    const response = await fetch(SHEET_URL);
+                    if (!response.ok) throw new Error('Could not connect to the Google Sheet.');
+                    const csvText = await response.text();
+                    
+                    const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== "");
+                    if (lines.length < 2) throw new Error('The spreadsheet appears to be empty.');
+                    
+                    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+
+                    const newInventory = {
+                        "Wines (Glass)": [],
+                        "Wines (Bottle)": [],
+                        "Spirits": [],
+                        "Beer": [],
+                        "After Dinner": [],
+                        "Captain's List": [],
+                        "Allocated": []
+                    };
+
+                    let totalCount = 0;
+                    for (let i = 1; i < lines.length; i++) {
+                        const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/^"|"$/g, ''));
+                        const row = {};
+                        headers.forEach((header, idx) => { if (header) row[header] = values[idx]; });
+
+                        if (!row['Product Name'] || row['Product Name'] === '0' || row['Product Name'] === '') continue;
+
+                        const bucket = getProgramBucket(row);
+                        if (!newInventory[bucket]) continue;
+
+                        newInventory[bucket].push({
+                            id: `item-${i}`,
+                            name: row['Product Name'],
+                            category: row['Category'] || "Uncategorized",
+                            subCategory: row['Sub Category'] || "General",
+                            origin: row['Origin'] || "Region N/A",
+                            location: row['Location'] || "Inquire with Bar",
+                            tastingNotes: row['Tasting Notes'] || "No notes available.",
+                            tableNotes: row['Notes'] || row['Detailed Note'] || "Standard service narrative.",
+                            status: row['Status'] || "In stock",
+                            price: row['Menu Price'] || row['Price Per 1oz Pour'] || "N/A",
+                            substitute: row['Approved Backup'] || "Consult Lead",
+                            subReason: row['Sub Reason'] || "Comparable flavor profile."
+                        });
+                        totalCount++;
+                    }
+
+                    if (totalCount === 0) {
+                        throw new Error(`Found 0 valid products. Check your "Product Name" column.`);
+                    }
+
+                    setInventoryData(newInventory);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            useEffect(() => { fetchData(); }, []);
+
+            const currentProgramData = inventoryData[activeProgram] || [];
+            const subCategories = ['All', ...new Set(currentProgramData.map(item => item.subCategory))];
+
+            const filteredData = useMemo(() => {
+                return currentProgramData.filter(item => {
+                    const s = searchTerm.toLowerCase();
+                    return item.name.toLowerCase().includes(s) || 
+                           item.subCategory.toLowerCase().includes(s) ||
+                           item.origin.toLowerCase().includes(s) ||
+                           item.location.toLowerCase().includes(s);
+                }).filter(item => activeSubCategory === 'All' || item.subCategory === activeSubCategory);
+            }, [searchTerm, activeSubCategory, activeProgram, inventoryData]);
+
+            const toggleExpand = (id) => { setExpandedItems(prev => ({ ...prev, [id]: !prev[id] })); };
+
+            const getStatusColor = (status) => {
+                const s = status?.toLowerCase() || '';
+                if (s.includes('86d')) return 'bg-red-100 text-red-700 border-red-200';
+                if (s.includes('allocated') || s.includes('limited')) return 'bg-purple-100 text-purple-700 border-purple-200';
+                return 'bg-green-100 text-green-700 border-green-200';
+            };
+
+            const getProgramIcon = (prog) => {
+                switch(prog) {
+                    case 'Wines (Glass)': return <GlassWater size={16} />;
+                    case 'Wines (Bottle)': return <Wine size={16} />;
+                    case 'Spirits': return <Flame size={16} />;
+                    case 'Beer': return <Beer size={16} />;
+                    case 'After Dinner': return <Moon size={16} />;
+                    case "Captain's List": return <Star size={16} />;
+                    case "Allocated": return <ShieldCheck size={16} />;
+                    default: return null;
+                }
+            };
+
+            if (isLoading) {
+                return (
+                    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-8">
+                        <RefreshCw className="animate-spin text-gray-400 mb-4" size={48} />
+                        <p className="font-serif italic text-xl text-gray-500">Updating Porch & Parlor Inventory...</p>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-50 pb-20">
+                    <div className="max-w-4xl mx-auto px-4 py-8">
+                        <header className="mb-6 flex flex-col gap-6">
+                            <div className="flex items-center justify-between">
+                                <div className="border-l-4 border-gray-800 pl-4">
+                                    <h1 className="text-3xl md:text-4xl font-serif font-bold text-gray-800 uppercase">Porch and Parlor</h1>
+                                    <p className="text-gray-500 mt-1 italic text-sm">Beverage Intelligence System • 2026</p>
+                                </div>
+                                <button onClick={fetchData} className="p-2 hover:bg-gray-200 rounded-full text-gray-400">
+                                    <RefreshCw size={20} />
+                                </button>
+                            </div>
+                            
+                            <div className="flex bg-gray-200 p-1 rounded-lg gap-1 overflow-x-auto">
+                                {Object.keys(inventoryData).map(prog => (
+                                    <button 
+                                        key={prog}
+                                        onClick={() => { setActiveProgram(prog); setActiveSubCategory('All'); }}
+                                        className={`flex-1 px-3 py-2 rounded text-xs font-bold uppercase transition-all whitespace-nowrap ${
+                                            activeProgram === prog ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                    >
+                                        {getProgramIcon(prog)} <span className="ml-1 hidden sm:inline">{prog}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </header>
+
+                        {error ? (
+                            <div className="bg-red-100 border border-red-300 p-8 rounded-lg text-center shadow">
+                                <AlertCircle className="text-red-500 mx-auto mb-4" size={48} />
+                                <h3 className="text-lg font-bold text-red-900 mb-2">Inventory Sync Error</h3>
+                                <p className="text-red-800 font-medium mb-6">{error}</p>
+                                <button onClick={fetchData} className="px-6 py-2 bg-red-600 text-white rounded font-bold">Retry</button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="sticky top-4 z-20 bg-white shadow-lg rounded-lg border border-gray-200 p-4 mb-8">
+                                    <div className="relative mb-4">
+                                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={20} />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Search by name, location, or origin..."
+                                            className="w-full pl-12 pr-4 py-3 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800"
+                                            value={searchTerm}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+                                    
+                                    <div className="flex overflow-x-auto gap-2 border-t border-gray-100 pt-3">
+                                        {subCategories.map(cat => (
+                                            <button
+                                                key={cat}
+                                                onClick={() => setActiveSubCategory(cat)}
+                                                className={`px-4 py-1 rounded-full text-xs font-bold uppercase whitespace-nowrap transition-all ${
+                                                    activeSubCategory === cat ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                                }`}
+                                            >
+                                                {cat}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    {filteredData.length > 0 ? (
+                                        filteredData.map(item => (
+                                            <div key={item.id} className={`bg-white rounded-lg border transition-all overflow-hidden cursor-pointer ${expandedItems[item.id] ? 'border-gray-400 shadow-lg' : 'border-gray-200 shadow'}`}>
+                                                <div className="p-5 flex items-center justify-between" onClick={() => toggleExpand(item.id)}>
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`p-3 rounded-lg ${item.status?.toLowerCase().includes('86d') ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
+                                                            {item.status?.toLowerCase().includes('86d') ? <Repeat size={20} /> : getProgramIcon(activeProgram)}
+                                                        </div>
+                                                        <div>
+                                                            <h3 className="font-serif font-bold text-lg text-gray-800 uppercase">{item.name}</h3>
+                                                            <div className="flex flex-wrap items-center gap-2 mt-2">
+                                                                <span className="text-xs font-bold text-gray-500 uppercase">{item.subCategory}</span>
+                                                                <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                                                                    <MapPin className="inline mr-1" size={10} /> {item.location}
+                                                                </span>
+                                                                <span className={`text-xs px-2 py-0.5 rounded font-bold uppercase border ${getStatusColor(item.status)}`}>
+                                                                    {item.status}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-gray-300">
+                                                        {expandedItems[item.id] ? <ChevronDown size={24} /> : <ChevronRight size={24} />}
+                                                    </div>
+                                                </div>
+
+                                                {expandedItems[item.id] && (
+                                                    <div className="px-6 pb-6 pt-2 bg-gray-50 border-t border-gray-100">
+                                                        {item.status?.toLowerCase().includes('86d') && (
+                                                            <div className="mb-4 p-4 bg-red-100 border border-red-300 rounded-lg flex items-center gap-3">
+                                                                <Repeat className="text-red-600" size={20} />
+                                                                <div>
+                                                                    <p className="text-xs font-bold text-red-700 uppercase">Substitution Required</p>
+                                                                    <p className="text-sm text-red-800">Pivot to: <span className="font-bold">{item.substitute}</span></p>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                                                            <div className="space-y-3">
+                                                                <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                                                    <p className="text-xs font-bold text-gray-500 uppercase mb-1">Location</p>
+                                                                    <p className="text-sm font-bold text-gray-800">{item.location}</p>
+                                                                </div>
+                                                                <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                                                    <p className="text-xs font-bold text-gray-500 uppercase mb-1">Origin</p>
+                                                                    <p className="text-sm text-gray-700">{item.origin}</p>
+                                                                </div>
+                                                                <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                                                    <p className="text-xs font-bold text-gray-500 uppercase mb-1">Tasting Notes</p>
+                                                                    <p className="text-xs text-gray-600 italic">"{item.tastingNotes}"</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="md:col-span-2 space-y-3">
+                                                                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                                                                    <div className="flex justify-between mb-2 pb-2 border-b border-gray-100">
+                                                                        <p className="text-xs font-bold text-gray-800 uppercase">Narrative</p>
+                                                                        <span className="text-xs text-gray-500">{item.price}</span>
+                                                                    </div>
+                                                                    <p className="text-sm text-gray-700 font-serif leading-relaxed">{item.tableNotes}</p>
+                                                                </div>
+                                                                <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                                                                    <p className="text-xs font-bold text-green-800 uppercase mb-1">Suggested Alternative</p>
+                                                                    <p className="text-sm font-bold text-gray-800">{item.substitute}</p>
+                                                                    <p className="text-xs text-gray-600 mt-1">{item.subReason}</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="text-center py-16 bg-white rounded-lg border-2 border-dashed border-gray-300">
+                                            <Star className="mx-auto text-gray-200 mb-4" size={64} />
+                                            <p className="text-gray-400 font-serif italic text-lg">No items found.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
